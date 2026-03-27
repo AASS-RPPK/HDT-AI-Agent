@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+
+import httpx
 from google.genai import types
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,7 +25,64 @@ def _build_history(messages: list[Message]) -> list[types.Content]:
     return history
 
 
-def send_message(db: Session, *, message: str, conversation_id: str | None) -> tuple[Conversation, Message, Message]:
+def _compact(value: object, *, max_chars: int = 1200) -> str:
+    text = json.dumps(value, ensure_ascii=True, default=str)
+    return text if len(text) <= max_chars else text[: max_chars - 3] + "..."
+
+
+def _extract_items(payload: object) -> list[object]:
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    for key in ("actions", "items", "results", "annotations", "feedback", "queue"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def _fetch_context_via_gateway(*, authorization: str | None) -> str:
+    if not authorization:
+        return "No bearer token available, gateway context fetch skipped."
+
+    base = settings.API_GATEWAY_URL.rstrip("/")
+    limit = settings.CONTEXT_FETCH_LIMIT
+    endpoints = [
+        ("/users/actions", {"limit": str(limit)}),
+        ("/feedback", {}),
+        ("/models/annotations", {"limit": str(limit)}),
+    ]
+    headers = {"Authorization": authorization}
+    blocks: list[str] = []
+
+    with httpx.Client(timeout=8.0) as client:
+        for path, params in endpoints:
+            label = f"GET {path}"
+            try:
+                res = client.get(f"{base}{path}", params=params, headers=headers)
+                if res.status_code != 200:
+                    blocks.append(f"{label}: unavailable (status {res.status_code})")
+                    continue
+                payload = res.json()
+                items = _extract_items(payload)
+                sample = items[: min(len(items), 5)]
+                blocks.append(
+                    f"{label}: total_items={len(items)}; sample={_compact(sample)}"
+                )
+            except Exception as exc:
+                blocks.append(f"{label}: unavailable ({exc})")
+
+    return "\n".join(blocks)
+
+
+def send_message(
+    db: Session,
+    *,
+    message: str,
+    conversation_id: str | None,
+    authorization: str | None,
+) -> tuple[Conversation, Message, Message]:
     """Send a user message and get an AI response.
 
     If conversation_id is provided, continues an existing conversation.
@@ -51,12 +111,21 @@ def send_message(db: Session, *, message: str, conversation_id: str | None) -> t
         [m for m in conversation.messages if m.id != user_msg.id]
     )
 
+    # Gather recent upstream context so the model can ground replies in
+    # behavioral actions, feedback queue, and annotation records.
+    upstream_context = _fetch_context_via_gateway(authorization=authorization)
+    context_prefix = (
+        "External context from API Gateway:\n"
+        f"{upstream_context}\n\n"
+        "Use this context when relevant. If unavailable, answer normally."
+    )
+
     # Call Gemini with conversation history.
     chat = gemini_client.chats.create(
         model=settings.GEMINI_MODEL,
         history=history,
     )
-    response = chat.send_message(message)
+    response = chat.send_message(f"{context_prefix}\n\nUser message:\n{message}")
     ai_text = response.text or ""
 
     # Persist the AI response.

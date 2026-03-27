@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # Gemini model to use for chat completions.
     GEMINI_MODEL: str = "gemini-2.5-flash"
 
+    # API Gateway base URL used to enrich chatbot context.
+    API_GATEWAY_URL: str = "http://api-gateway:8000"
+    CONTEXT_FETCH_LIMIT: int = Field(default=20, ge=1, le=200)
+
     # Comma-separated allowed origins for CORS.
     CORS_ORIGINS: str = ""
 

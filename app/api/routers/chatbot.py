@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -24,6 +24,7 @@ router = APIRouter(prefix="/models", tags=["models"])
 @router.post("/chatbot", response_model=ChatResponse)
 def post_chatbot(
     request: ChatMessageRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
 ) -> ChatResponse:
     """Send a message to the AI chatbot.
@@ -33,7 +34,10 @@ def post_chatbot(
     """
     try:
         conversation, user_msg, ai_msg = send_message(
-            db, message=request.message, conversation_id=request.conversation_id
+            db,
+            message=request.message,
+            conversation_id=request.conversation_id,
+            authorization=http_request.headers.get("authorization"),
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
