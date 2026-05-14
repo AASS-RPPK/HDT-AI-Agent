@@ -1,13 +1,27 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers.chatbot import router as chatbot_router
 from app.core.config import settings
 from app.db.init_db import init_db
+from app.kafka_consumer import run_chatbot_consumer
 
-app = FastAPI(title="HDT AI Agent")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    task = asyncio.create_task(run_chatbot_consumer(), name="kafka-chatbot-consumer")
+    yield
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
+app = FastAPI(title="HDT AI Agent", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,8 +32,3 @@ app.add_middleware(
 )
 
 app.include_router(chatbot_router)
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    init_db()

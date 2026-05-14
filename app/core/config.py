@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     API_GATEWAY_URL: str = "http://api-gateway:8000"
     CONTEXT_FETCH_LIMIT: int = Field(default=20, ge=1, le=200)
 
+    # Kafka bootstrap servers for event-driven chatbot requests.
+    KAFKA_BOOTSTRAP_SERVERS: str = "kafka:9092"
+
     # Comma-separated allowed origins for CORS.
     CORS_ORIGINS: str = ""
 
